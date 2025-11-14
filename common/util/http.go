@@ -1,11 +1,5 @@
 package util
 
-/*
- * @Desc: http工具类
- * @author: 福狼
- * @version: v1.0.0
- */
-
 import (
 	"crypto/tls"
 	"encoding/json"
@@ -13,236 +7,224 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
+/*
+ * @Desc: http工具类
+ * @author: 福狼
+ * @version: v1.0.0
+ */
+
+// 全局HTTP客户端
+var (
+	defaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // 若需验证证书设为false
+		},
+		MaxIdleConns:        100,              // 最大空闲连接数
+		MaxConnsPerHost:     20,               // 每个主机的最大连接数
+		IdleConnTimeout:     30 * time.Second, // 空闲连接超时时间
+		TLSHandshakeTimeout: 5 * time.Second,  // TLS握手超时
+	}
+
+	defaultClient = &http.Client{
+		Transport: defaultTransport,
+		Timeout:   30 * time.Second, // 默认超时时间
+	}
+)
+
+// GetByHttp 基础GET请求
 func GetByHttp(url string) (string, error) {
-	// 发送 get 请求
-	resp, err := http.Get(url)
+	resp, err := defaultClient.Get(url)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "send get failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("发送GET请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 响应码和HTTP协议版本
-	fmt.Println(resp.StatusCode, resp.Proto)
-
-	// 读取响应内容
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "get resp failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("读取响应体失败: %w", err)
 	}
 
 	return string(body), nil
 }
 
+// PostByHttp 基础POST请求
 func PostByHttp(url, contentType string, params map[string]any) (string, error) {
-	// map转json
 	jsonData, err := json.Marshal(params)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "marshal json failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("参数JSON序列化失败: %w", err)
 	}
 
-	// 发送 post 请求
-	resp, err := http.Post(url, contentType, strings.NewReader(string(jsonData)))
+	resp, err := defaultClient.Post(url, contentType, strings.NewReader(string(jsonData)))
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "send post failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("发送POST请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 响应码和HTTP协议版本
-	fmt.Println(resp.StatusCode, resp.Proto)
-
-	// 读取响应内容
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "get resp failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("读取响应体失败: %w", err)
 	}
 
 	return string(body), nil
 }
 
-// Get 请求头 参数 返回: string
+// GetByHttpWithParams 带请求头、参数和超时的GET请求
 func GetByHttpWithParams(apiUrl string, headers map[string]string, params map[string]string, timeout time.Duration, proxy *string) (string, error) {
-	// 构建表单
+	// 构建查询参数
 	values := url.Values{}
 	for k, v := range params {
 		values.Add(k, v)
 	}
-
-	// 拼接url和参数
 	paramStr := values.Encode()
 	if paramStr != "" {
 		apiUrl = fmt.Sprintf("%s?%s", apiUrl, paramStr)
 	}
 
 	// 创建请求
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	// 是否代理加速
-	if proxy != nil {
-		proxyURL, _ := url.Parse(*proxy)
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
-	}
 	req, err := http.NewRequest("GET", apiUrl, nil)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create request failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("创建请求失败: %w", err)
 	}
-	// 增加请求头
+
+	// 设置请求头
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
 
-	// 请求
+	// 获取客户端
+	client := getClientWithProxy(proxy, timeout)
+
+	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "send get failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("发送GET请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 响应码和http协议版本
-	fmt.Println(resp.StatusCode, resp.Proto)
-
+	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "get resp failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("读取响应体失败: %w", err)
 	}
 
 	return string(body), nil
 }
 
-// Get 请求头 参数 返回: *goquery.Document
+// GetByHttpWithParamsBackDoc 带参数的GET请求，返回goquery.Document
 func GetByHttpWithParamsBackDoc(apiUrl string, headers map[string]string, params map[string]string, timeout time.Duration, proxy *string) (*goquery.Document, error) {
-	// 构建表单
+	// 构建查询参数
 	values := url.Values{}
 	for k, v := range params {
 		values.Add(k, v)
 	}
-
-	// 拼接url和参数
 	paramStr := values.Encode()
 	if paramStr != "" {
 		apiUrl = fmt.Sprintf("%s?%s", apiUrl, paramStr)
 	}
 
 	// 创建请求
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	// 是否代理加速
-	if proxy != nil {
-		proxyURL, _ := url.Parse(*proxy)
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
-	}
 	req, err := http.NewRequest("GET", apiUrl, nil)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create request failed, err:%v", err)
-		return nil, err
+		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-	// 增加请求头
+
+	// 设置请求头
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
-	// 请求
+
+	// 获取客户端（根据代理动态选择Transport）
+	client := getClientWithProxy(proxy, timeout)
+
+	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "send get failed, err:%v", err)
-		return nil, err
+		return nil, fmt.Errorf("发送GET请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 响应码和http协议版本
-	fmt.Println(resp.StatusCode, resp.Proto)
-
-	// 解析 HTML 内容
+	// 解析为goquery.Document
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("解析响应为HTML失败: %w", err)
 	}
 
 	return doc, nil
 }
 
-// Post 请求头 参数 返回: string
+// PostByHttpWithParams 带参数的POST请求
 func PostByHttpWithParams(apiUrl string, headers map[string]string, params map[string]string, timeout time.Duration, proxy *string) (string, error) {
-	// 构建表单
+	// 构建表单参数
 	values := url.Values{}
 	for k, v := range params {
 		values.Add(k, v)
 	}
-
-	// 拼接url和参数
 	paramStr := values.Encode()
-	if paramStr != "" {
-		apiUrl = fmt.Sprintf("%s?%s", apiUrl, paramStr)
-	}
 
-	// 创建请求
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	// 是否代理加速
-	if proxy != nil {
-		proxyURL, _ := url.Parse(*proxy)
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
-	}
-	req, err := http.NewRequest("POST", apiUrl, nil)
+	// 创建请求（参数放在Body中，而非URL）
+	req, err := http.NewRequest("POST", apiUrl, strings.NewReader(paramStr))
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create request failed, err:%v", err)
-		return "", err
-	}
-	// 增加请求头
-	for k, v := range headers {
-		req.Header.Add(k, v)
+		return "", fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	// 请求
+	// 设置默认Content-Type（表单提交）
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// 覆盖自定义请求头
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// 获取客户端
+	client := getClientWithProxy(proxy, timeout)
+
+	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "send get failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("发送POST请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 响应码和http协议版本
-	fmt.Println(resp.StatusCode, resp.Proto)
-
+	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "get resp failed, err:%v", err)
-		return "", err
+		return "", fmt.Errorf("读取响应体失败: %w", err)
 	}
 
 	return string(body), nil
+}
+
+// 工具函数：根据代理和超时时间获取客户端
+func getClientWithProxy(proxy *string, timeout time.Duration) *http.Client {
+	// 无需代理使用默认客户端
+	if proxy == nil || *proxy == "" {
+		return &http.Client{
+			Transport: defaultTransport,
+			Timeout:   timeout,
+		}
+	}
+
+	// 有代理时创建带代理的Transport
+	proxyURL, err := url.Parse(*proxy)
+	if err != nil {
+		// 代理解析失败 降级使用默认客户端
+		return &http.Client{
+			Transport: defaultTransport,
+			Timeout:   timeout,
+		}
+	}
+
+	// 仅修改Proxy
+	proxyTransport := *defaultTransport
+	proxyTransport.Proxy = http.ProxyURL(proxyURL)
+
+	return &http.Client{
+		Transport: &proxyTransport,
+		Timeout:   timeout,
+	}
 }
