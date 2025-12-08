@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +13,7 @@ import (
 	cs "github.com/GoFurry/gofurry-game-collector/common/service"
 	"github.com/GoFurry/gofurry-game-collector/common/util"
 	"github.com/GoFurry/gofurry-game-collector/roof/env"
+	"github.com/bytedance/sonic"
 	"github.com/sourcegraph/conc/pool"
 	"github.com/tidwall/gjson"
 )
@@ -37,7 +37,7 @@ var headersMap = map[string]string{
 // 采集的国区代码
 var langList = []string{"CN", "HK", "US"}
 
-// 游戏模块采集部分
+// Collect 游戏模块采集部分
 func (s gameService) Collect() {
 	// 每次采集都查寻数据库 保证热更新
 	gameList, err := addAllGameToList()
@@ -45,7 +45,7 @@ func (s gameService) Collect() {
 		log.Error("receive InitGameCollection recover: ", err)
 	}
 
-	log.Info("Game 采集开始")
+	log.Info("Game Collect 采集开始")
 	// 遍历 Game 列表
 	// 游戏信息
 	for _, v := range gameList {
@@ -59,8 +59,102 @@ func (s gameService) Collect() {
 	}
 	// 等待所有 Game 采集完毕
 	wg.Wait()
-	log.Info("Game 采集结束")
+	log.Info("Game Collect 采集结束")
 
+}
+
+// 游戏在线人数采集部分
+func (s gameService) CollectCurrentPlayers() {
+	// 每次采集都查寻数据库 保证热更新
+	gameList, err := addAllGameToList()
+	if err != nil {
+		log.Error("receive InitGameCollection recover: ", err)
+	}
+
+	log.Info("CollectCurrentPlayers 采集开始")
+	// 遍历 Game 列表
+	// 游戏信息
+	for _, v := range gameList {
+		wg.Add(1)
+		gameThread.Go(startGamePlayerCollect(v))
+	}
+	// 等待所有 Game 采集完毕
+	wg.Wait()
+	log.Info("CollectCurrentPlayers 采集结束")
+}
+
+// startGamePlayerCollect 开始游戏在线人数采集
+func startGamePlayerCollect(gameID models.GameID) func() {
+	return func() {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Error("receive startGamePlayerCollect recover: ", err)
+			}
+		}()
+		defer wg.Done() // 确保线程结束时组数减少
+
+		// 执行采集获取结果
+		playerCount := performGamePlayerCollect(gameID)
+
+		countSaveRecord := models.GfgGamePlayerCount{
+			ID:         util.GenerateId(),
+			GameID:     gameID.ID,
+			Count:      playerCount,
+			CreateTime: cm.LocalTime(time.Now()),
+		}
+
+		// 存数据库
+		skipCount := 120
+		cnt, err := dao.GetGamePlayerDao().GetPlayerCountByID(gameID.ID)
+		if err != nil {
+			log.Error("GetPlayerCountByID error: ", err)
+		}
+		last, err := dao.GetGamePlayerDao().GetLastRecordByID(gameID.ID, skipCount)
+		if err != nil {
+			log.Error("GetLastRecordByID error: ", err)
+		}
+		if cnt >= int64(skipCount) {
+			dao.GetGamePlayerDao().Delete(last, models.GfgGamePlayerCount{}) // 删最早的记录
+			dao.GetGamePlayerDao().Add(&countSaveRecord)                     // 入库
+		} else {
+			dao.GetGamePlayerDao().Add(&countSaveRecord) // 入库
+		}
+
+		// 存 redis
+		idStr := util.Int642String(gameID.ID)
+		jsonResult, _ := sonic.Marshal(countSaveRecord)
+		cs.SetNX("game:online"+idStr, string(jsonResult), 3*time.Hour)     // 创建记录
+		cs.SetExpire("game:online"+idStr, string(jsonResult), 3*time.Hour) // 更新记录
+
+	}
+}
+
+// performGamePlayerCollect 执行游戏在线人数采集
+func performGamePlayerCollect(gameID models.GameID) int64 {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Error("receive performGamePlayerCollect recover: ", err)
+		}
+	}()
+
+	appidStr := util.Int642String(gameID.Appid)
+
+	// 请求地址
+	url := `https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?`
+
+	// 设置参数
+	paramsMap := map[string]string{
+		"appid": appidStr,
+	}
+
+	// 请求 SteamAPI
+	respDataStr, httpErr := util.GetByHttpWithParams(url, headersMap, paramsMap, 10*time.Second, &env.GetServerConfig().Collector.Proxy)
+	if httpErr != nil {
+		log.Warn(httpErr)
+		return 0
+	}
+
+	return gjson.Get(respDataStr, "response.player_count").Int()
 }
 
 // 开始游戏记录采集
@@ -123,7 +217,7 @@ func startGameCollect(gameID models.GameID) func() {
 				}
 			}
 		}
-		priceListJson, jsonErr := json.Marshal(priceList)
+		priceListJson, jsonErr := sonic.Marshal(priceList)
 		if jsonErr != nil {
 			log.Error("marshal priceList error: ", jsonErr)
 		}
@@ -240,17 +334,17 @@ func startGameCollect(gameID models.GameID) func() {
 
 		// 存 redis
 		idStr := util.Int642String(gameID.ID)
-		jsonResultCN, _ := json.Marshal(redisRecordCN)
+		jsonResultCN, _ := sonic.Marshal(redisRecordCN)
 		cs.SetNX("game:zh-info"+idStr, string(jsonResultCN), 12*time.Hour)     // 创建记录
 		cs.SetExpire("game:zh-info"+idStr, string(jsonResultCN), 12*time.Hour) // 更新记录
 
-		jsonResultEN, _ := json.Marshal(redisRecordEN)
+		jsonResultEN, _ := sonic.Marshal(redisRecordEN)
 		cs.SetNX("game:en-info"+idStr, string(jsonResultEN), 12*time.Hour)     // 创建记录
 		cs.SetExpire("game:en-info"+idStr, string(jsonResultEN), 12*time.Hour) // 更新记录
 	}
 }
 
-// 执行游戏记录采集
+// performGameCollect 执行游戏记录采集
 func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, map[string]map[string]any) {
 	defer func() {
 		if err := recover(); err != nil {
@@ -309,7 +403,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 			// 不免费
 			priceDataStr := gjson.Get(respDataStr, appidStr+".data.price_overview").String()
 			var newPrice models.SteamAppPrice
-			jsonErr := json.Unmarshal([]byte(priceDataStr), &newPrice)
+			jsonErr := sonic.Unmarshal([]byte(priceDataStr), &newPrice)
 			if jsonErr != nil {
 				log.Error("models.SteamAppPrice json转换错误.", jsonErr)
 			}
@@ -326,7 +420,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["release_date"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.release_date").String()
 			var newDate models.SteamAppRelease
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newDate)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newDate)
 			if jsonErr != nil {
 				log.Error("models.SteamAppRelease json转换错误.", jsonErr)
 			}
@@ -337,7 +431,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["platforms"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.platforms").String()
 			var newPlatform models.SteamAppPlatform
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newPlatform)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newPlatform)
 			if jsonErr != nil {
 				log.Error("models.SteamAppPlatform json转换错误.", jsonErr)
 			}
@@ -348,7 +442,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["developers"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.developers").String()
 			var newDevelopers []string
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newDevelopers)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newDevelopers)
 			if jsonErr != nil {
 				log.Error("newDevelopers json转换错误.", jsonErr)
 			}
@@ -359,7 +453,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["publishers"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.publishers").String()
 			var newPublishers []string
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newPublishers)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newPublishers)
 			if jsonErr != nil {
 				log.Error("newPublishers json转换错误.", jsonErr)
 			}
@@ -389,7 +483,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["support_info"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.support_info").String()
 			var newSupport models.SteamAppSupport
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newSupport)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newSupport)
 			if jsonErr != nil {
 				log.Error("models.SteamAppSupport json转换错误.", jsonErr)
 			}
@@ -412,7 +506,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["screenshots"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.screenshots").String()
 			var newScreenshot []models.SteamAppScreenshot
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newScreenshot)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newScreenshot)
 			if jsonErr != nil {
 				log.Error("models.SteamAppScreenshot json转换错误.", jsonErr)
 			}
@@ -423,7 +517,7 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["movies"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.movies").String()
 			var newMovie []models.SteamAppMovie
-			jsonErr := json.Unmarshal([]byte(tempDataStr), &newMovie)
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newMovie)
 			if jsonErr != nil {
 				log.Error("models.SteamAppMovie json转换错误.", jsonErr)
 			}
@@ -500,11 +594,11 @@ func startGameNewsCollect(gameID models.GameID) func() {
 
 			// 储存到 redis
 			idStr := util.Int642String(gameID.ID)
-			jsonResultCN, _ := json.Marshal(saveModelCN)
+			jsonResultCN, _ := sonic.Marshal(saveModelCN)
 			cs.SetNX("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 12*time.Hour)     // 创建记录
 			cs.SetExpire("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 12*time.Hour) // 更新记录
 
-			jsonResultEN, _ := json.Marshal(saveModelCN)
+			jsonResultEN, _ := sonic.Marshal(saveModelCN)
 			cs.SetNX("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 12*time.Hour)     // 创建记录
 			cs.SetExpire("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 12*time.Hour) // 更新记录
 
@@ -568,7 +662,7 @@ func performGameNewsCollect(gameID models.GameID, cnt int, cntStr string) (map[s
 		nowNews.Date = cm.LocalTime(cstTime)
 		// 内容
 		content := gjson.Get(respDataStr, "appnews.newsitems."+idx+".contents").String()
-		nowNews.Contents = util.BBCodeToHTML(content)
+		nowNews.Contents = util.ParseBBCode(content)
 
 		// 存储结果
 		newsResEN[idx] = nowNews
@@ -595,7 +689,7 @@ func performGameNewsCollect(gameID models.GameID, cnt int, cntStr string) (map[s
 		nowNews.Title = gjson.Get(respDataStr, "events."+idx+".announcement_body.headline").String() // 标题
 		// 内容
 		content := gjson.Get(respDataStr, "events."+idx+".announcement_body.body").String()
-		nowNews.Contents = util.BBCodeToHTML(content)
+		nowNews.Contents = util.ParseBBCode(content)
 
 		// 存储结果
 		newsResCN[idx] = nowNews

@@ -29,8 +29,11 @@ func (api *gameApi) InitGameCollection() {
 
 	//初始化后执行一次 Ping
 	go service.GetGameService().Collect()
+	go service.GetGameService().CollectCurrentPlayers()
+
 	// 定时任务执行 Ping
 	cs.AddCronJob(time.Duration(env.GetServerConfig().Collector.Game.GameInterval)*time.Hour, service.GetGameService().Collect)
+	cs.AddCronJob(time.Duration(env.GetServerConfig().Collector.Game.GamePlayerInterval)*time.Hour, service.GetGameService().CollectCurrentPlayers)
 
 	fmt.Println("Game 模块初始化结束...")
 }
