@@ -29,8 +29,9 @@ type CollectorConfig struct {
 }
 
 type GameConfig struct {
-	GameThread   int `yaml:"game_thread"`
-	GameInterval int `yaml:"game_interval"`
+	GameThread         int `yaml:"game_thread"`
+	GameInterval       int `yaml:"game_interval"`
+	GamePlayerInterval int `yaml:"game_player_interval"`
 }
 
 type ServerConfig struct {

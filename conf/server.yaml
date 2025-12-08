@@ -33,3 +33,4 @@ collector:
   game:
     game_thread: 10 # 默认 10 个线程同时执行采集
     game_interval: 6 # 默认 6 小时执行采集
+    game_player_interval: 1 # 默认 1 小时执行采集

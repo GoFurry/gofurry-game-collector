@@ -2,7 +2,6 @@ package util
 
 import (
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/bytedance/sonic"
 )
 
 /*
@@ -55,7 +55,7 @@ func GetByHttp(url string) (string, error) {
 
 // PostByHttp 基础POST请求
 func PostByHttp(url, contentType string, params map[string]any) (string, error) {
-	jsonData, err := json.Marshal(params)
+	jsonData, err := sonic.Marshal(params)
 	if err != nil {
 		return "", fmt.Errorf("参数JSON序列化失败: %w", err)
 	}
