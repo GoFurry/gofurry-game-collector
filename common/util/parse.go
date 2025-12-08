@@ -1,11 +1,5 @@
 package util
 
-/*
- * @Desc: 格式转换工具类
- * @author: 福狼
- * @version: v1.0.0
- */
-
 import (
 	"bytes"
 	"regexp"
@@ -14,80 +8,115 @@ import (
 	"github.com/yuin/goldmark"
 )
 
-// BBCode解析规则
-var replacements = map[string]string{
-	// 文本样式标签
-	`(?i)\[b\](.*?)\[/b\]`:               `<strong>$1</strong>`,
-	`(?i)\[i\](.*?)\[/i\]`:               `<em>$1</em>`,
-	`(?i)\[u\](.*?)\[/u\]`:               `<u>$1</u>`,
-	`(?i)\[s\](.*?)\[/s\]`:               `<s>$1</s>`,
-	`(?i)\[color=(.*?)\](.*?)\[/color\]`: `<span style="color:$1;">$2</span>`,
-	`(?i)\[size=(.*?)\](.*?)\[/size\]`:   `<span style="font-size:$1;">$2</span>`,
-	`(?i)\[font=(.*?)\](.*?)\[/font\]`:   `<span style="font-family:$1;">$2</span>`,
+// Steam BBCode 特殊标签替换
+var bbReplacements = map[string]string{
+	// 文本样式
+	`(?i)\[b\](.*?)\[/b\]`:     `<strong>$1</strong>`,
+	`(?i)\[i\](.*?)\[/i\]`:     `<em>$1</em>`,
+	`(?i)\[u\](.*?)\[/u\]`:     `<u>$1</u>`,
+	`(?i)\[s\](.*?)\[/s\]`:     `<s>$1</s>`,
+	`(?i)\[h1\](.*?)\[/h1\]`:   `<h1>$1</h1>`,
+	`(?i)\[h2\](.*?)\[/h2\]`:   `<h2>$1</h2>`,
+	`(?i)\[h3\](.*?)\[/h3\]`:   `<h3>$1</h3>`,
+	`(?i)\[p\](.*?)\[/p\]`:     `$1<br>`,
+	`(?i)\[img\](.*?)\[/img\]`: `<img src="$1" />`,
 
-	// 结构化标签
-	`(?i)\[h1\](.*?)\[/h1\]`:       `<h1>$1</h1>`,
-	`(?i)\[h2\](.*?)\[/h2\]`:       `<h2>$1</h2>`,
-	`(?i)\[h3\](.*?)\[/h3\]`:       `<h3>$1</h3>`,
-	`(?i)\[quote\](.*?)\[/quote\]`: `<blockquote>$1</blockquote>`,
-	`(?i)\[code\](.*?)\[/code\]`:   `<pre><code>$1</code></pre>`,
-
-	// 列表标签
-	`(?i)\[list\](.*?)\[/list\]`:   `<ul>$1</ul>`,
-	`(?i)\[\*\](.*?)\n`:            `<li>$1</li>`,
-	`(?i)\[list=1\](.*?)\[/list\]`: `<ol>$1</ol>`,
-
-	// 链接与媒体
-	`(?i)\[url\](.*?)\[/url\]`:         `<a href="$1">$1</a>`,
-	`(?i)\[url=(.*?)\](.*?)\[/url\]`:   `<a href="$1">$2</a>`,
-	`(?i)\[img\](.*?)\[/img\]`:         `<img src="$1" />`,
-	`(?i)\[video\](.*?)\[/video\]`:     `<video src="$1" controls></video>`,
-	`(?i)\[youtube\](.*?)\[/youtube\]`: `<iframe src="https://www.youtube.com/embed/$1" frameborder="0" allowfullscreen></iframe>`,
-
-	// 表格
-	`(?i)\[table\](.*?)\[/table\]`: `<table>$1</table>`,
-	`(?i)\[tr\](.*?)\[/tr\]`:       `<tr>$1</tr>`,
-	`(?i)\[td\](.*?)\[/td\]`:       `<td>$1</td>`,
-
-	// 对齐
-	`(?i)\[center\](.*?)\[/center\]`: `<div style="text-align: center;">$1</div>`,
-	`(?i)\[right\](.*?)\[/right\]`:   `<div style="text-align: right;">$1</div>`,
+	// 链接
+	`(?i)\[url\](.*?)\[/url\]`:       `<a href="$1">$1</a>`,
+	`(?i)\[url=(.*?)\](.*?)\[/url\]`: `<a href="$1">$2</a>`,
 }
 
-// Markdown 转 html
+// 将 BBCode 递归解析成 HTML
+func ParseBBCode(input string) string {
+	// 先替换 Steam 图片前缀
+	input = strings.ReplaceAll(input, "{STEAM_CLAN_IMAGE}", "https://clan.fastly.steamstatic.com/images/")
+
+	// 处理 img/video/youtube
+	input = regexp.MustCompile(`(?i)\[img\s+src="(.*?)"\]\s*\[/img\]`).ReplaceAllString(input, `<img src="$1" />`)
+	input = regexp.MustCompile(`(?i)\[video\](.*?)\[/video\]`).ReplaceAllString(input, `<video src="$1" controls></video>`)
+	input = regexp.MustCompile(`(?i)\[youtube\](.*?)\[/youtube\]`).ReplaceAllString(input, `<iframe src="https://www.youtube.com/embed/$1" frameborder="0" allowfullscreen></iframe>`)
+
+	// 替换常规 BBCode 标签
+	for pattern, replacement := range bbReplacements {
+		re := regexp.MustCompile(pattern)
+		input = re.ReplaceAllString(input, replacement)
+	}
+	// 解析第一次嵌套
+	for pattern, replacement := range bbReplacements {
+		re := regexp.MustCompile(pattern)
+		input = re.ReplaceAllString(input, replacement)
+	}
+	// 解析第二次嵌套
+	for pattern, replacement := range bbReplacements {
+		re := regexp.MustCompile(pattern)
+		input = re.ReplaceAllString(input, replacement)
+	}
+
+	// 递归解析列表
+	input = parseLists(input)
+
+	// 将换行转换为 <br>
+	input = strings.ReplaceAll(input, "\n", "<br>")
+
+	return input
+}
+
+// 递归解析 [list] 和 [olist] 以及 [*] 项
+func parseLists(input string) string {
+	listPattern := regexp.MustCompile(`(?is)\[list\](.*?)\[/list\]`)
+	olistPattern := regexp.MustCompile(`(?is)\[olist\](.*?)\[/olist\]`)
+
+	// 处理无序列表
+	input = listPattern.ReplaceAllStringFunc(input, func(m string) string {
+		content := listPattern.FindStringSubmatch(m)[1]
+		items := splitListItems(content)
+		var buf strings.Builder
+		buf.WriteString("<ul>")
+		for _, it := range items {
+			buf.WriteString("<li>" + parseLists(it) + "</li>")
+		}
+		buf.WriteString("</ul>")
+		return buf.String()
+	})
+
+	// 处理有序列表
+	input = olistPattern.ReplaceAllStringFunc(input, func(m string) string {
+		content := olistPattern.FindStringSubmatch(m)[1]
+		items := splitListItems(content)
+		var buf strings.Builder
+		buf.WriteString("<ol>")
+		for _, it := range items {
+			buf.WriteString("<li>" + parseLists(it) + "</li>")
+		}
+		buf.WriteString("</ol>")
+		return buf.String()
+	})
+
+	return input
+}
+
+// 安全拆分列表项
+func splitListItems(content string) []string {
+	// 把 [*] 替换成一个特殊分隔符
+	tmp := strings.ReplaceAll(content, "[*]", "\x00")
+	parts := strings.Split(tmp, "\x00")
+	var items []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			items = append(items, p)
+		}
+	}
+	return items
+}
+
+// Markdown 转 HTML
 func MarkdownToHTML(markdownContent string) (string, error) {
-	// 使用 bytes.Buffer 来接收转换后的 HTML 内容
 	var buf bytes.Buffer
 	md := goldmark.New()
-
-	// 将 Markdown 转换为 HTML
 	err := md.Convert([]byte(markdownContent), &buf)
 	if err != nil {
 		return "", err
 	}
-
-	// 返回转换后的 HTML 字符串
 	return buf.String(), nil
-}
-
-// BBCode 转 html (Steam专用)
-func BBCodeToHTML(input string) string {
-
-	// steam图片地址前缀
-	input = strings.ReplaceAll(input, "{STEAM_CLAN_IMAGE}", "https://clan.fastly.steamstatic.com/images/")
-
-	// 正则表达式替换 BBCode
-	for pattern, replacement := range replacements {
-		re := regexp.MustCompile(pattern)
-		input = re.ReplaceAllString(input, replacement)
-	}
-	// 将 \n 替换为 <br>
-	input = strings.ReplaceAll(input, "\n", "<br>")
-	// 替换换行符周围的 URL
-	urlInBrPattern := regexp.MustCompile(`(?i)<br>(https?://[^\s]+?)<br>`)
-	input = urlInBrPattern.ReplaceAllString(input, `<a href="$1">$1</a>`)
-	urlPattern := regexp.MustCompile(`(?i)<br>(https?://[^\s]+) <br>`)
-	input = urlPattern.ReplaceAllString(input, `<a href="$1">$1</a>`)
-
-	return input
 }
