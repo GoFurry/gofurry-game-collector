@@ -392,6 +392,11 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 			return priceRes, infoRes
 		}
 
+		// 判断是否成功, 锁区游戏国区请求会返回错误
+		if !gjson.Get(respDataStr, appidStr+".success").Bool() {
+			continue
+		}
+
 		// 是否免费
 		isFree := gjson.Get(respDataStr, appidStr+".data.is_free").String()
 		if isFree == "true" {

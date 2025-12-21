@@ -111,7 +111,7 @@ const TableNameGfgGameRecord = "gfg_game_record"
 type GfgGameRecord struct {
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;comment:游戏记录表id" json:"id"`                              // 游戏记录表id
 	GameID      int64  `gorm:"column:game_id;type:bigint;not null;comment:游戏表id" json:"gameId,string"`                  // 游戏表id
-	Language    string `gorm:"column:language;type:character varying(255);not null;comment:支持语言" json:"language"`       // 支持语言
+	Language    string `gorm:"column:language;type:text;not null;comment:支持语言" json:"language"`                         // 支持语言
 	ReleaseDate string `gorm:"column:release_date;type:character varying(30);not null;comment:发行时间" json:"releaseDate"` // 发行时间
 	Platform    string `gorm:"column:platform;type:character varying(50);not null;comment:支持平台" json:"platform"`        // 支持平台
 	Developer   string `gorm:"column:developer;type:character varying(100);not null;comment:开发商" json:"developer"`      // 开发商
