@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GoFurry/gofurry-game-collector/collecter/game/service"
+	"github.com/GoFurry/gofurry-game-collector/collector/game/service"
 	"github.com/GoFurry/gofurry-game-collector/common/log"
 	cs "github.com/GoFurry/gofurry-game-collector/common/service"
 	"github.com/GoFurry/gofurry-game-collector/roof/env"

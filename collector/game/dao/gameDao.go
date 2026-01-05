@@ -1,7 +1,7 @@
 package dao
 
 import (
-	"github.com/GoFurry/gofurry-game-collector/collecter/game/models"
+	"github.com/GoFurry/gofurry-game-collector/collector/game/models"
 	"github.com/GoFurry/gofurry-game-collector/common"
 	"github.com/GoFurry/gofurry-game-collector/common/abstract"
 )

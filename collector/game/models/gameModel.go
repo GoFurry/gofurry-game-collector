@@ -1,7 +1,10 @@
 package models
 
 import (
+	"time"
+
 	cm "github.com/GoFurry/gofurry-game-collector/common/models"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 const TableNameGfgGame = "gfg_game"
@@ -71,13 +74,9 @@ type SteamAppMovie struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Thumbnail string `json:"thumbnail"`
-	Webm      Movie  `json:"webm"`
-	Mp4       Movie  `json:"mp4"`
-}
-
-type Movie struct {
-	P480 string `json:"480"`
-	Max  string `json:"max"`
+	DashAv1   string `json:"dash_av1"`
+	DashH264  string `json:"dash_h264"`
+	HlsH264   string `json:"hls_h264"`
 }
 
 type PriceModel struct {
@@ -85,22 +84,30 @@ type PriceModel struct {
 	Country string `json:"country"`
 }
 
+type PcRequirementModel struct {
+	Minimum     string `json:"minimum"`
+	Recommended string `json:"recommended"`
+}
+
 type GameSaveModel struct {
-	Price              SteamAppPrice        `json:"price"`
-	Support            SteamAppSupport      `json:"support"`
-	Screenshots        []SteamAppScreenshot `json:"screenshots"`
-	Movies             []SteamAppMovie      `json:"movies"`
-	PriceList          string               `json:"price_list"`
-	SupportedLanguages string               `json:"supported_languages"`
-	Developers         string               `json:"developers"`
-	Publishers         string               `json:"publishers"`
-	HeaderImage        string               `json:"header_image"`
-	ShortDescription   string               `json:"short_description"`
-	Date               string               `json:"date"`
-	Platforms          string               `json:"platforms"`
-	RequiredAge        string               `json:"required_age"`
-	Website            string               `json:"website"`
-	ContentDescriptors string               `json:"content_descriptors"`
+	Price               SteamAppPrice        `json:"price"`
+	Support             SteamAppSupport      `json:"support"`
+	Screenshots         []SteamAppScreenshot `json:"screenshots"`
+	Movies              []SteamAppMovie      `json:"movies"`
+	PriceList           string               `json:"price_list"`
+	SupportedLanguages  string               `json:"supported_languages"`
+	Developers          string               `json:"developers"`
+	Publishers          string               `json:"publishers"`
+	HeaderImage         string               `json:"header_image"`
+	ShortDescription    string               `json:"short_description"`
+	Date                string               `json:"date"`
+	Platforms           string               `json:"platforms"`
+	RequiredAge         string               `json:"required_age"`
+	Website             string               `json:"website"`
+	ContentDescriptors  string               `json:"content_descriptors"`
+	DetailedDescription string               `json:"detailed_description"`
+	AboutTheGame        string               `json:"about_the_game"`
+	PcRequirements      PcRequirementModel   `json:"pc_requirements"`
 
 	CollectDate cm.LocalTime `json:"collect_date"`
 }
@@ -118,7 +125,6 @@ type GfgGameRecord struct {
 	Publisher   string `gorm:"column:publisher;type:character varying(100);not null;comment:发行商" json:"publisher"`      // 发行商
 	Info        string `gorm:"column:info;type:text;not null;comment:游戏概述" json:"info"`                                 // 游戏概述
 	Cover       string `gorm:"column:cover;type:character varying(255);comment:封面图" json:"cover"`                       // 封面图
-	HotIndex    int64  `gorm:"column:hot_index;type:bigint;not null;comment:热度指数" json:"hotIndex"`                      // 热度指数
 	Lang        string `gorm:"column:lang;type:character varying(20);not null;comment:记录的语言" json:"lang"`               // 记录的语言
 	PriceList   string `gorm:"column:price_list;type:json;not null;comment:游戏价格列表" json:"priceList"`                    // 游戏价格列表
 	Initial     int64  `gorm:"column:initial;type:bigint;not null;comment:游戏价格" json:"initial"`                         // 游戏价格
@@ -195,4 +201,29 @@ type GfgGamePlayerCount struct {
 // TableName GfgGamePlayerCount's table name
 func (*GfgGamePlayerCount) TableName() string {
 	return TableNameGfgGamePlayerCount
+}
+
+// GameIntro 游戏简介HTML存储模型
+type GameIntro struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`                  // MongoDB自动生成的ID
+	GameID      int64              `bson:"game_id" json:"game_id"`                   // 游戏表ID
+	Content     string             `bson:"content" json:"content"`                   // HTML简介内容
+	Lang        string             `bson:"lang" json:"lang"`                         // 语言
+	Screenshots []string           `bson:"screenshots,omitempty" json:"screenshots"` // 截图URL数组
+	Videos      []string           `bson:"videos,omitempty" json:"videos"`           // 视频URL数组
+	CreateTime  time.Time          `bson:"create_time" json:"create_time"`           // 创建时间
+	UpdateTime  time.Time          `bson:"update_time" json:"update_time"`           // 更新时间
+}
+
+// GameIntroVo 响应VO
+type GameIntroVo struct {
+	Content     string       `json:"content"`
+	Screenshots []string     `json:"screenshots"`
+	Videos      []string     `json:"videos"`
+	UpdateTime  cm.LocalTime `json:"update_time"`
+}
+
+// TableName 返回集合名
+func (GameIntro) TableName() string {
+	return "game_intro"
 }

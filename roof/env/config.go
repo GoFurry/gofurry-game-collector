@@ -20,7 +20,17 @@ type serverConfig struct {
 	Server    ServerConfig    `yaml:"server"`
 	DataBase  DataBaseConfig  `yaml:"data_base"`
 	Redis     RedisConfig     `yaml:"redis"`
+	Mongodb   MongodbConfig   `yaml:"mongodb"`
 	Collector CollectorConfig `yaml:"collector"`
+}
+
+type MongodbConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	Host     string `yaml:"host"`
+	Port     string `yaml:"port"`
+	AuthDB   string `yaml:"auth_db"`
+	DBName   string `yaml:"db_name"`
 }
 
 type CollectorConfig struct {

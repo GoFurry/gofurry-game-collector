@@ -1,7 +1,7 @@
 package schedule
 
 import (
-	game "github.com/GoFurry/gofurry-game-collector/collecter/game/controller"
+	game "github.com/GoFurry/gofurry-game-collector/collector/game/controller"
 	"github.com/GoFurry/gofurry-game-collector/common/log"
 )
 

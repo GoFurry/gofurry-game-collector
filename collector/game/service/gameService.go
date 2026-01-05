@@ -1,12 +1,13 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/GoFurry/gofurry-game-collector/collecter/game/dao"
-	"github.com/GoFurry/gofurry-game-collector/collecter/game/models"
+	"github.com/GoFurry/gofurry-game-collector/collector/game/dao"
+	"github.com/GoFurry/gofurry-game-collector/collector/game/models"
 	"github.com/GoFurry/gofurry-game-collector/common"
 	"github.com/GoFurry/gofurry-game-collector/common/log"
 	cm "github.com/GoFurry/gofurry-game-collector/common/models"
@@ -16,6 +17,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/sourcegraph/conc/pool"
 	"github.com/tidwall/gjson"
+	"golang.org/x/time/rate"
 )
 
 type gameService struct{}
@@ -27,6 +29,10 @@ func GetGameService() *gameService { return gameSingleton }
 var gameThread = pool.New().WithMaxGoroutines(env.GetServerConfig().Collector.Game.GameThread)
 var gameRWLock sync.RWMutex
 var wg sync.WaitGroup
+
+// 全局限流器：Steam API限制100次/分钟, 这里设为95次/分钟
+// rate.Limit(95/60) = 1.5833次/秒，Burst设为10
+var steamAPILimiter = rate.NewLimiter(rate.Limit(95)/60, 10)
 
 // 设置请求头，明确指定语言为中文
 var headersMap = map[string]string{
@@ -50,12 +56,28 @@ func (s gameService) Collect() {
 	// 游戏信息
 	for _, v := range gameList {
 		wg.Add(1)
-		gameThread.Go(startGameCollect(v))
+		gameThread.Go(func() {
+			// 阻塞式获取令牌
+			if err := steamAPILimiter.Wait(context.Background()); err != nil {
+				log.Error("获取限流令牌失败: ", err)
+				wg.Done()
+				return
+			}
+			startGameCollect(v)() // 执行实际采集逻辑
+		})
 	}
 	// 游戏更新信息
 	for _, v := range gameList {
 		wg.Add(1)
-		gameThread.Go(startGameNewsCollect(v))
+		gameThread.Go(func() {
+			// 阻塞式获取令牌
+			if err := steamAPILimiter.Wait(context.Background()); err != nil {
+				log.Error("获取限流令牌失败: ", err)
+				wg.Done()
+				return
+			}
+			startGameNewsCollect(v)() // 执行实际采集逻辑
+		})
 	}
 	// 等待所有 Game 采集完毕
 	wg.Wait()
@@ -76,7 +98,15 @@ func (s gameService) CollectCurrentPlayers() {
 	// 游戏信息
 	for _, v := range gameList {
 		wg.Add(1)
-		gameThread.Go(startGamePlayerCollect(v))
+		gameThread.Go(func() {
+			// 阻塞式获取令牌
+			if err := steamAPILimiter.Wait(context.Background()); err != nil {
+				log.Error("获取限流令牌失败: ", err)
+				wg.Done()
+				return
+			}
+			startGamePlayerCollect(v)() // 执行实际采集逻辑
+		})
 	}
 	// 等待所有 Game 采集完毕
 	wg.Wait()
@@ -254,20 +284,23 @@ func startGameCollect(gameID models.GameID) func() {
 				}
 				dbRecordCN.Platform = strings.Join(platforms, ", ")
 				// redis 部分
-				redisRecordCN.Support = v["support_info"].(models.SteamAppSupport)         // 开发商联系方式
-				redisRecordCN.Screenshots = v["screenshots"].([]models.SteamAppScreenshot) // 游戏图片
-				redisRecordCN.Movies = v["movies"].([]models.SteamAppMovie)                // 游戏视频
-				redisRecordCN.SupportedLanguages = dbRecordCN.Language                     // 支持语言
-				redisRecordCN.Developers = dbRecordCN.Developer                            // 开发商
-				redisRecordCN.Publishers = dbRecordCN.Publisher                            // 发行商
-				redisRecordCN.HeaderImage = dbRecordCN.Cover                               // 封面图
-				redisRecordCN.ShortDescription = dbRecordCN.Info                           // 概述
-				redisRecordCN.Date = dbRecordCN.ReleaseDate                                // 发行日期
-				redisRecordCN.Platforms = dbRecordCN.Platform                              // 支持平台
-				redisRecordCN.RequiredAge = v["required_age"].(string)                     // 年龄限制
-				redisRecordCN.Website = v["website"].(string)                              // 游戏官网
-				redisRecordCN.ContentDescriptors = v["content_descriptors"].(string)       // 内容描述
-				redisRecordCN.CollectDate = cm.LocalTime(time.Now())                       // 采集时间
+				redisRecordCN.Support = v["support_info"].(models.SteamAppSupport)              // 开发商联系方式
+				redisRecordCN.Screenshots = v["screenshots"].([]models.SteamAppScreenshot)      // 游戏图片
+				redisRecordCN.Movies = v["movies"].([]models.SteamAppMovie)                     // 游戏视频
+				redisRecordCN.SupportedLanguages = dbRecordCN.Language                          // 支持语言
+				redisRecordCN.Developers = dbRecordCN.Developer                                 // 开发商
+				redisRecordCN.Publishers = dbRecordCN.Publisher                                 // 发行商
+				redisRecordCN.HeaderImage = dbRecordCN.Cover                                    // 封面图
+				redisRecordCN.ShortDescription = dbRecordCN.Info                                // 概述
+				redisRecordCN.Date = dbRecordCN.ReleaseDate                                     // 发行日期
+				redisRecordCN.Platforms = dbRecordCN.Platform                                   // 支持平台
+				redisRecordCN.RequiredAge = v["required_age"].(string)                          // 年龄限制
+				redisRecordCN.Website = v["website"].(string)                                   // 游戏官网
+				redisRecordCN.ContentDescriptors = v["content_descriptors"].(string)            // 内容描述
+				redisRecordCN.CollectDate = cm.LocalTime(time.Now())                            // 采集时间
+				redisRecordCN.DetailedDescription = v["detailed_description"].(string)          // 详情简介
+				redisRecordCN.AboutTheGame = v["about_the_game"].(string)                       // 关于游戏
+				redisRecordCN.PcRequirements = v["pc_requirements"].(models.PcRequirementModel) // 配置需求
 			case "US":
 				// 数据库部分
 				dbRecordEN.Language = v["supported_languages"].(string)               // 支持的语言
@@ -295,39 +328,38 @@ func startGameCollect(gameID models.GameID) func() {
 				}
 				dbRecordEN.Platform = strings.Join(platforms, ", ")
 				// redis 部分
-				redisRecordEN.Support = v["support_info"].(models.SteamAppSupport)         // 开发商联系方式
-				redisRecordEN.Screenshots = v["screenshots"].([]models.SteamAppScreenshot) // 游戏图片
-				redisRecordEN.Movies = v["movies"].([]models.SteamAppMovie)                // 游戏视频
-				redisRecordEN.SupportedLanguages = dbRecordCN.Language                     // 支持语言
-				redisRecordEN.Developers = dbRecordCN.Developer                            // 开发商
-				redisRecordEN.Publishers = dbRecordCN.Publisher                            // 发行商
-				redisRecordEN.HeaderImage = dbRecordCN.Cover                               // 封面图
-				redisRecordEN.ShortDescription = dbRecordCN.Info                           // 概述
-				redisRecordEN.Date = dbRecordCN.ReleaseDate                                // 发行日期
-				redisRecordEN.Platforms = dbRecordCN.Platform                              // 支持平台
-				redisRecordEN.RequiredAge = v["required_age"].(string)                     // 年龄限制
-				redisRecordEN.Website = v["website"].(string)                              // 游戏官网
-				redisRecordEN.ContentDescriptors = v["content_descriptors"].(string)       // 内容描述
-				redisRecordEN.CollectDate = cm.LocalTime(time.Now())                       // 采集时间
+				redisRecordEN.Support = v["support_info"].(models.SteamAppSupport)              // 开发商联系方式
+				redisRecordEN.Screenshots = v["screenshots"].([]models.SteamAppScreenshot)      // 游戏图片
+				redisRecordEN.Movies = v["movies"].([]models.SteamAppMovie)                     // 游戏视频
+				redisRecordEN.SupportedLanguages = dbRecordCN.Language                          // 支持语言
+				redisRecordEN.Developers = dbRecordCN.Developer                                 // 开发商
+				redisRecordEN.Publishers = dbRecordCN.Publisher                                 // 发行商
+				redisRecordEN.HeaderImage = dbRecordCN.Cover                                    // 封面图
+				redisRecordEN.ShortDescription = dbRecordCN.Info                                // 概述
+				redisRecordEN.Date = dbRecordCN.ReleaseDate                                     // 发行日期
+				redisRecordEN.Platforms = dbRecordCN.Platform                                   // 支持平台
+				redisRecordEN.RequiredAge = v["required_age"].(string)                          // 年龄限制
+				redisRecordEN.Website = v["website"].(string)                                   // 游戏官网
+				redisRecordEN.ContentDescriptors = v["content_descriptors"].(string)            // 内容描述
+				redisRecordEN.CollectDate = cm.LocalTime(time.Now())                            // 采集时间
+				redisRecordEN.DetailedDescription = v["detailed_description"].(string)          // 详情简介
+				redisRecordEN.AboutTheGame = v["about_the_game"].(string)                       // 关于游戏
+				redisRecordEN.PcRequirements = v["pc_requirements"].(models.PcRequirementModel) // 配置需求
 			}
 		}
 
 		// 存数据库
 		enRecord, err := dao.GetGameDao().GetGameRecordByGameIDAndLang(gameID.ID, "en")
 		if err != nil && err.GetMsg() == "record not found" {
-			dbRecordEN.HotIndex = 0
 			dao.GetGameDao().Add(&dbRecordEN)
 		} else if err == nil {
-			dbRecordEN.HotIndex = enRecord.HotIndex
 			dbRecordEN.ID = enRecord.ID
 			dao.GetGameDao().Update(enRecord.ID, &dbRecordEN)
 		}
 		zhRecord, err := dao.GetGameDao().GetGameRecordByGameIDAndLang(gameID.ID, "zh")
 		if err != nil && err.GetMsg() == "record not found" {
-			dbRecordCN.HotIndex = 0
 			dao.GetGameDao().Add(&dbRecordCN)
 		} else if err == nil {
-			dbRecordCN.HotIndex = zhRecord.HotIndex
 			dbRecordCN.ID = zhRecord.ID
 			dao.GetGameDao().Update(zhRecord.ID, &dbRecordCN)
 		}
@@ -528,6 +560,29 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 			}
 			infoRes[nowLang]["movies"] = newMovie
 		}
+
+		// 详情描述
+		if _, exist := infoRes[nowLang]["detailed_description"]; !exist {
+			tempDataStr := gjson.Get(respDataStr, appidStr+".data.detailed_description").String()
+			infoRes[nowLang]["detailed_description"] = tempDataStr
+		}
+
+		// 关于游戏
+		if _, exist := infoRes[nowLang]["about_the_game"]; !exist {
+			tempDataStr := gjson.Get(respDataStr, appidStr+".data.about_the_game").String()
+			infoRes[nowLang]["about_the_game"] = tempDataStr
+		}
+
+		// 配置需求
+		if _, exist := infoRes[nowLang]["pc_requirements"]; !exist {
+			tempDataStr := gjson.Get(respDataStr, appidStr+".data.pc_requirements").String()
+			var newRequirement models.PcRequirementModel
+			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newRequirement)
+			if jsonErr != nil {
+				log.Error("models.PcRequirementModel json转换错误.", jsonErr)
+			}
+			infoRes[nowLang]["pc_requirements"] = newRequirement
+		}
 	}
 
 	return priceRes, infoRes
@@ -549,6 +604,12 @@ func startGameNewsCollect(gameID models.GameID) func() {
 
 		for i := 0; i < cnt; i++ {
 			idx := util.Int2String(i)
+
+			// steam 更新公告接口若不足 num 篇公告就返回空
+			if newsResEN[idx].Title == "" && newsResEN[idx].Contents == "" &&
+				newsResCN[idx].Title == "" && newsResCN[idx].Contents == "" {
+				continue
+			}
 
 			saveModelEN := models.GfgGameNews{
 				ID:       util.GenerateId(),
