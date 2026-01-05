@@ -34,3 +34,12 @@ collector:
     game_thread: 10 # 默认 10 个线程同时执行采集
     game_interval: 6 # 默认 6 小时执行采集
     game_player_interval: 1 # 默认 1 小时执行采集
+
+# mongodb
+mongodb:
+  username: "mongodb"
+  password: "123456"
+  host: "192.168.153.121"
+  port: "7017"
+  auth_db: "admin"
+  db_name: "gfg" # 默认数据库名称
