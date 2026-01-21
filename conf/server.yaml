@@ -30,10 +30,14 @@ log:
 # 采集器
 collector:
   proxy: "http://127.0.0.1:7897" # 代理服务器地址
+  limiter:
+    steam_api: 2 # api.steam... 限流器一个令牌n秒 默认 2
+    steam_store: 6 # store.steam... 限流器一个令牌n秒 默认 6
   game:
     game_thread: 10 # 默认 10 个线程同时执行采集
-    game_interval: 6 # 默认 6 小时执行采集
+    game_interval: 24 # 默认 24 小时执行采集
     game_player_interval: 1 # 默认 1 小时执行采集
+
 
 # mongodb
 mongodb:

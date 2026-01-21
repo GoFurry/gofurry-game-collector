@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GoFurry/gofurry-game-collector/collector/game/dao"
@@ -26,15 +27,28 @@ var gameSingleton = new(gameService)
 
 func GetGameService() *gameService { return gameSingleton }
 
-var gameThread = pool.New().WithMaxGoroutines(env.GetServerConfig().Collector.Game.GameThread)
+var gameThread *pool.Pool
 var gameRWLock sync.RWMutex
 var wg sync.WaitGroup
 
-// 全局限流器：Steam API限制100次/分钟, 这里设为95次/分钟
-// rate.Limit(95/60) = 1.5833次/秒，Burst设为10
-var steamAPILimiter = rate.NewLimiter(rate.Limit(95)/60, 10)
+var steamAPILimiter, steamStoreLimiter *rate.Limiter
 
-// 设置请求头，明确指定语言为中文
+var storeReqCount atomic.Int32
+
+// InitLimiter 初始化限流相关变量
+func InitLimiter() {
+	storeReqCount.Store(0)
+
+	gameThread = pool.New().WithMaxGoroutines(env.GetServerConfig().Collector.Game.GameThread)
+
+	limiter := env.GetServerConfig().Collector.Limiter
+	// api 接口限流器 Steam风控大概在 100 token / 1 minutes
+	steamAPILimiter = rate.NewLimiter(rate.Every(time.Duration(limiter.SteamApi)*time.Second), 3)
+	// store 接口限流器 Steam风控大概在 [150,250]token / 5 minutes
+	steamStoreLimiter = rate.NewLimiter(rate.Every(time.Duration(limiter.SteamStore)*time.Second), 3)
+}
+
+// 设置请求头, 明确指定语言为中文
 var headersMap = map[string]string{
 	"User-Agent":      common.USER_AGENT,
 	"Accept-Language": common.ACCEPT_LANGUAGE_CN,
@@ -57,8 +71,7 @@ func (s gameService) Collect() {
 	for _, v := range gameList {
 		wg.Add(1)
 		gameThread.Go(func() {
-			// 阻塞式获取令牌
-			if err := steamAPILimiter.Wait(context.Background()); err != nil {
+			if err := steamStoreLimiter.Wait(context.Background()); err != nil {
 				log.Error("获取限流令牌失败: ", err)
 				wg.Done()
 				return
@@ -70,8 +83,7 @@ func (s gameService) Collect() {
 	for _, v := range gameList {
 		wg.Add(1)
 		gameThread.Go(func() {
-			// 阻塞式获取令牌
-			if err := steamAPILimiter.Wait(context.Background()); err != nil {
+			if err := steamStoreLimiter.Wait(context.Background()); err != nil {
 				log.Error("获取限流令牌失败: ", err)
 				wg.Done()
 				return
@@ -99,7 +111,6 @@ func (s gameService) CollectCurrentPlayers() {
 	for _, v := range gameList {
 		wg.Add(1)
 		gameThread.Go(func() {
-			// 阻塞式获取令牌
 			if err := steamAPILimiter.Wait(context.Background()); err != nil {
 				log.Error("获取限流令牌失败: ", err)
 				wg.Done()
@@ -192,7 +203,7 @@ func startGameCollect(gameID models.GameID) func() {
 	return func() {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Error("receive startGameCollect recover: ", err)
+				log.Error("receive startGameCollect recover, game_id=", gameID.ID, " appid=", gameID.Appid, " err:", err)
 			}
 		}()
 		defer wg.Done() // 确保线程结束时组数减少
@@ -439,12 +450,16 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		} else {
 			// 不免费
 			priceDataStr := gjson.Get(respDataStr, appidStr+".data.price_overview").String()
-			var newPrice models.SteamAppPrice
-			jsonErr := sonic.Unmarshal([]byte(priceDataStr), &newPrice)
-			if jsonErr != nil {
-				log.Error("models.SteamAppPrice json转换错误.", jsonErr)
+			if priceDataStr != "" {
+				var newPrice models.SteamAppPrice
+				jsonErr := sonic.Unmarshal([]byte(priceDataStr), &newPrice)
+				if jsonErr != nil {
+					log.Error("models.SteamAppPrice json转换错误.", jsonErr)
+				}
+				priceRes[lang] = newPrice
+			} else {
+				priceRes[lang] = models.SteamAppPrice{}
 			}
-			priceRes[lang] = newPrice
 		}
 
 		// 支持的语言
@@ -457,22 +472,30 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["release_date"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.release_date").String()
 			var newDate models.SteamAppRelease
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newDate)
-			if jsonErr != nil {
-				log.Error("models.SteamAppRelease json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newDate)
+				if jsonErr != nil {
+					log.Error("models.SteamAppRelease json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["release_date"] = newDate
+			} else {
+				infoRes[nowLang]["release_date"] = models.SteamAppRelease{}
 			}
-			infoRes[nowLang]["release_date"] = newDate
 		}
 
 		// 支持平台
 		if _, exist := infoRes[nowLang]["platforms"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.platforms").String()
 			var newPlatform models.SteamAppPlatform
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newPlatform)
-			if jsonErr != nil {
-				log.Error("models.SteamAppPlatform json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newPlatform)
+				if jsonErr != nil {
+					log.Error("models.SteamAppPlatform json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["platforms"] = newPlatform
+			} else {
+				infoRes[nowLang]["platforms"] = models.SteamAppPlatform{}
 			}
-			infoRes[nowLang]["platforms"] = newPlatform
 		}
 
 		// 开发商
@@ -520,11 +543,15 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["support_info"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.support_info").String()
 			var newSupport models.SteamAppSupport
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newSupport)
-			if jsonErr != nil {
-				log.Error("models.SteamAppSupport json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newSupport)
+				if jsonErr != nil {
+					log.Error("models.SteamAppSupport json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["support_info"] = newSupport
+			} else {
+				infoRes[nowLang]["support_info"] = models.SteamAppSupport{}
 			}
-			infoRes[nowLang]["support_info"] = newSupport
 		}
 
 		// 游戏官网
@@ -543,22 +570,30 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["screenshots"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.screenshots").String()
 			var newScreenshot []models.SteamAppScreenshot
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newScreenshot)
-			if jsonErr != nil {
-				log.Error("models.SteamAppScreenshot json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newScreenshot)
+				if jsonErr != nil {
+					log.Error("models.SteamAppScreenshot json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["screenshots"] = newScreenshot
+			} else {
+				infoRes[nowLang]["screenshots"] = []models.SteamAppScreenshot{}
 			}
-			infoRes[nowLang]["screenshots"] = newScreenshot
 		}
 
 		// 游戏视频
 		if _, exist := infoRes[nowLang]["movies"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.movies").String()
 			var newMovie []models.SteamAppMovie
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newMovie)
-			if jsonErr != nil {
-				log.Error("models.SteamAppMovie json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newMovie)
+				if jsonErr != nil {
+					log.Error("models.SteamAppMovie json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["movies"] = newMovie
+			} else {
+				infoRes[nowLang]["movies"] = []models.SteamAppMovie{}
 			}
-			infoRes[nowLang]["movies"] = newMovie
 		}
 
 		// 详情描述
@@ -577,11 +612,15 @@ func performGameCollect(gameID models.GameID) (map[string]models.SteamAppPrice, 
 		if _, exist := infoRes[nowLang]["pc_requirements"]; !exist {
 			tempDataStr := gjson.Get(respDataStr, appidStr+".data.pc_requirements").String()
 			var newRequirement models.PcRequirementModel
-			jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newRequirement)
-			if jsonErr != nil {
-				log.Error("models.PcRequirementModel json转换错误.", jsonErr)
+			if tempDataStr != "" {
+				jsonErr := sonic.Unmarshal([]byte(tempDataStr), &newRequirement)
+				if jsonErr != nil {
+					log.Error("models.PcRequirementModel json转换错误.", jsonErr)
+				}
+				infoRes[nowLang]["pc_requirements"] = newRequirement
+			} else {
+				infoRes[nowLang]["pc_requirements"] = models.PcRequirementModel{}
 			}
-			infoRes[nowLang]["pc_requirements"] = newRequirement
 		}
 	}
 

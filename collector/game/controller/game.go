@@ -27,6 +27,9 @@ func (api *gameApi) InitGameCollection() {
 	}()
 	fmt.Println("Game 模块初始化开始...")
 
+	// 初始化限流器
+	service.InitLimiter()
+
 	//初始化后执行一次 Ping
 	go service.GetGameService().Collect()
 	go service.GetGameService().CollectCurrentPlayers()

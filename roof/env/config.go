@@ -34,8 +34,14 @@ type MongodbConfig struct {
 }
 
 type CollectorConfig struct {
-	Proxy string     `yaml:"proxy"`
-	Game  GameConfig `yaml:"game"`
+	Proxy   string        `yaml:"proxy"`
+	Limiter LimiterConfig `yaml:"limiter"`
+	Game    GameConfig    `yaml:"game"`
+}
+
+type LimiterConfig struct {
+	SteamApi   int `yaml:"steam_api"`
+	SteamStore int `yaml:"steam_store"`
 }
 
 type GameConfig struct {
