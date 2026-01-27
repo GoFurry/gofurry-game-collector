@@ -378,12 +378,12 @@ func startGameCollect(gameID models.GameID) func() {
 		// 存 redis
 		idStr := util.Int642String(gameID.ID)
 		jsonResultCN, _ := sonic.Marshal(redisRecordCN)
-		cs.SetNX("game:zh-info"+idStr, string(jsonResultCN), 12*time.Hour)     // 创建记录
-		cs.SetExpire("game:zh-info"+idStr, string(jsonResultCN), 12*time.Hour) // 更新记录
+		cs.SetNX("game:zh-info"+idStr, string(jsonResultCN), 168*time.Hour)     // 创建记录
+		cs.SetExpire("game:zh-info"+idStr, string(jsonResultCN), 168*time.Hour) // 更新记录
 
 		jsonResultEN, _ := sonic.Marshal(redisRecordEN)
-		cs.SetNX("game:en-info"+idStr, string(jsonResultEN), 12*time.Hour)     // 创建记录
-		cs.SetExpire("game:en-info"+idStr, string(jsonResultEN), 12*time.Hour) // 更新记录
+		cs.SetNX("game:en-info"+idStr, string(jsonResultEN), 168*time.Hour)     // 创建记录
+		cs.SetExpire("game:en-info"+idStr, string(jsonResultEN), 168*time.Hour) // 更新记录
 	}
 }
 
@@ -700,12 +700,12 @@ func startGameNewsCollect(gameID models.GameID) func() {
 			// 储存到 redis
 			idStr := util.Int642String(gameID.ID)
 			jsonResultCN, _ := sonic.Marshal(saveModelCN)
-			cs.SetNX("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 12*time.Hour)     // 创建记录
-			cs.SetExpire("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 12*time.Hour) // 更新记录
+			cs.SetNX("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 168*time.Hour)     // 创建记录
+			cs.SetExpire("game:zh-news"+idStr+"-"+idx, string(jsonResultCN), 168*time.Hour) // 更新记录
 
 			jsonResultEN, _ := sonic.Marshal(saveModelCN)
-			cs.SetNX("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 12*time.Hour)     // 创建记录
-			cs.SetExpire("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 12*time.Hour) // 更新记录
+			cs.SetNX("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 168*time.Hour)     // 创建记录
+			cs.SetExpire("game:en-news"+idStr+"-"+idx, string(jsonResultEN), 168*time.Hour) // 更新记录
 
 		}
 
